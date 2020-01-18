@@ -8,13 +8,14 @@ from collections import namedtuple
 
 
 class Bot:
-    STATE_NORMAL = 1
+
+    STATE_BLITZ = 1
     STATE_DEFENSE = 2
     STATE_RUN_TO_SAFETY = 3
-    STATE_RANDOM = 4
+    STATE_ATTACK = 4
 
     def __init__(self):
-        self.state = Bot.STATE_NORMAL
+        self.state = Bot.STATE_BLITZ
 
     def get_closest_tile(self, me: Player, game: Game, target_type: TileType):
         game_map = game.map
@@ -25,7 +26,11 @@ class Bot:
                     distance = self.manhattan_distance(
                         me.position, Point(x, y))
                     if distance < closest_blitz[0]:
-                        closest_blitz = (distance, Point(x, y))
+                        path = self.find_path(me, game, Point(x,y))
+                        maze = Maze(game, me)
+                        neighbors = maze.get_neighbors(Maze.Node(x,y,None))
+                        if path != None and len(neighbors) >= 2:
+                            closest_blitz = (distance, Point(x, y))
         return closest_blitz[1]
 
     def get_closest_safe_tile(self, me: Player, game: Game):
@@ -33,12 +38,18 @@ class Bot:
         closest_safe_tile = (math.inf, None)
         for y, row in enumerate(game_map):
             for x, tile in enumerate(row):
-                if game.get_tile_type_at(Point(x, y)) == TileType.CONQUERED and game.get_tile_owner_id(Point(x, y)) == me.id:
+                if (game.get_tile_type_at(Point(x, y)) == TileType.CONQUERED and game.get_tile_owner_id(Point(x, y)) == me.id) or Point(x,y) == me.tail[0]:
                     distance = self.manhattan_distance(
                         me.position, Point(x, y))
                     if distance < closest_safe_tile[0]:
                         closest_safe_tile = (distance, Point(x, y))
         return closest_safe_tile[1]
+
+    def find_path(self, me: Player, game: Game, target: Point):
+        start = Maze.Node(me.position.x, me.position.y, None)
+        goal = Maze.Node(target.x, target.y, None)
+        maze = Maze(game, me)
+        return PathSolver.find_shortest_path(maze, start, goal)
 
     def manhattan_distance(self, a: Point, b: Point):
         return abs(a.x-b.x) + abs(a.y-b.y)
@@ -148,17 +159,13 @@ class Bot:
                     if self.state == Bot.STATE_RUN_TO_SAFETY:
                         break
 
-            if self.state == Bot.STATE_NORMAL:
+            if self.state == Bot.STATE_BLITZ:
                 if closest_blitz == None:
                     self.state = Bot.STATE_DEFENSE
                     return self.get_next_move(game_message)
 
                 if closest_blitz != None:
-                    start = Maze.Node(me.position.x, me.position.y, None)
-                    goal = Maze.Node(closest_blitz.x, closest_blitz.y, None)
-                    maze = Maze(game_message.game, me)
-                    path = PathSolver.find_shortest_path(maze, start, goal)
-
+                    path = self.find_path(me, game_message.game, closest_blitz)
                     if path != None:
                         action = self.goto(me, path[0])
                         if action in legal_moves:
@@ -167,17 +174,13 @@ class Bot:
             elif self.state == Bot.STATE_DEFENSE:
                 if len(me.tail) == 1:
                     if closest_blitz != None:
-                        self.state = Bot.STATE_NORMAL
+                        self.state = Bot.STATE_BLITZ
                     else:
-                        self.state = Bot.STATE_RANDOM
+                        self.state = Bot.STATE_ATTACK
                     return self.get_next_move(game_message)
 
                 target = me.tail[0]
-                start = Maze.Node(me.position.x, me.position.y, None)
-                goal = Maze.Node(target.x, target.y, None)
-                maze = Maze(game_message.game, me)
-                path = PathSolver.find_shortest_path(maze, start, goal)
-
+                path = self.find_path(me, game_message.game, target)
                 if path != None:
                     action = self.goto(me, path[0])
                     if action in legal_moves:
@@ -186,21 +189,27 @@ class Bot:
             elif self.state == Bot.STATE_RUN_TO_SAFETY:
                 if len(me.tail) == 1:
                     if closest_blitz != None:
-                        self.state = Bot.STATE_NORMAL
+                        self.state = Bot.STATE_BLITZ
                     else:
-                        self.state = Bot.STATE_RANDOM
+                        self.state = Bot.STATE_ATTACK
                     return self.get_next_move(game_message)
 
                 target = closest_safe_tile
-                start = Maze.Node(me.position.x, me.position.y, None)
-                goal = Maze.Node(target.x, target.y, None)
-                maze = Maze(game_message.game, me)
-                path = PathSolver.find_shortest_path(maze, start, goal)
-
+                path = self.find_path(me, game_message.game, target)
                 if path != None:
                     action = self.goto(me, path[0])
                     if action in legal_moves:
                         return action
+
+            elif self.state == Bot.STATE_ATTACK:
+                for id, player in players_by_id.items():
+                    if id != game_message.game.player_id:
+                        target = player.tail[0]
+                        path = self.find_path(me, game_message.game, target)
+                        if path != None:
+                            action = self.goto(me, path[0])
+                            if action in legal_moves:
+                                return action
 
         except Exception as e:
             print(str(e))
@@ -243,10 +252,6 @@ class PathSolver:
                     heapq.heappush(queue, neighbor)
                     visited[neighbor.id] = neighbor.cost
         return None
-
-    @staticmethod
-    def find_all_paths(maze, start, goal):
-        pass
 
 
 class Maze:
