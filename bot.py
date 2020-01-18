@@ -103,10 +103,15 @@ class Bot:
                 me, game_message.game)
             if closest_safe_tile == None:
                 closest_safe_tile = me.tail[0]
+
             distance_to_safety = self.manhattan_distance(
                 closest_safe_tile, me.position)
 
-            print(closest_safe_tile, distance_to_safety)
+            target = closest_safe_tile
+            start = Maze.Node(me.position.x, me.position.y, None)
+            goal = Maze.Node(target.x, target.y, None)
+            maze = Maze(game_message.game, me)
+            path_to_safety = PathSolver.find_shortest_path(maze, start, goal)
 
             for player_id, player in players_by_id.items():
                 if player_id == game_message.game.player_id or player.killed:
@@ -131,7 +136,7 @@ class Bot:
                     elif me.position.x == point.x and me.position.y - 1 == point.y and me.direction != Direction.DOWN:
                         return self.goto(me, Direction.UP)
 
-            if self.state != Bot.STATE_RUN_TO_SAFETY:
+            if self.state == Bot.STATE_NORMAL and path_to_safety != None:
                 tail = me.tail[1:]
                 tail.append(me.position)
 
@@ -140,10 +145,16 @@ class Bot:
                         continue
 
                     for point in tail:
-
-                        if self.manhattan_distance(player.position, point) - 1 < distance_to_safety:
-                            self.state = Bot.STATE_RUN_TO_SAFETY
-                            break
+                        if self.manhattan_distance(player.position, point) - 4 < distance_to_safety:
+                            start = Maze.Node(
+                                player.position.x, player.position.y, None)
+                            goal = Maze.Node(point.x, point.y, None)
+                            maze = Maze(game_message.game, me)
+                            path_to_death = PathSolver.find_shortest_path(
+                                maze, start, goal, include_tail=True)
+                            if len(path_to_safety) > len(path_to_death) or len(path_to_death) < 4:
+                                self.state = Bot.STATE_RUN_TO_SAFETY
+                                break
 
                     if self.state == Bot.STATE_RUN_TO_SAFETY:
                         break
@@ -157,7 +168,8 @@ class Bot:
                     start = Maze.Node(me.position.x, me.position.y, None)
                     goal = Maze.Node(closest_blitz.x, closest_blitz.y, None)
                     maze = Maze(game_message.game, me)
-                    path = PathSolver.find_shortest_path(maze, start, goal)
+                    path = PathSolver.find_shortest_path(
+                        maze, start, goal)
 
                     if path != None:
                         action = self.goto(me, path[0])
@@ -176,7 +188,8 @@ class Bot:
                 start = Maze.Node(me.position.x, me.position.y, None)
                 goal = Maze.Node(target.x, target.y, None)
                 maze = Maze(game_message.game, me)
-                path = PathSolver.find_shortest_path(maze, start, goal)
+                path = PathSolver.find_shortest_path(
+                    maze, start, goal)
 
                 if path != None:
                     action = self.goto(me, path[0])
@@ -191,19 +204,13 @@ class Bot:
                         self.state = Bot.STATE_RANDOM
                     return self.get_next_move(game_message)
 
-                target = closest_safe_tile
-                start = Maze.Node(me.position.x, me.position.y, None)
-                goal = Maze.Node(target.x, target.y, None)
-                maze = Maze(game_message.game, me)
-                path = PathSolver.find_shortest_path(maze, start, goal)
-
-                if path != None:
-                    action = self.goto(me, path[0])
+                if path_to_safety != None:
+                    action = self.goto(me, path_to_safety[0])
                     if action in legal_moves:
                         return action
 
         except Exception as e:
-            print(str(e))
+            print(e)
 
         return random.choice(legal_moves)
 
@@ -219,7 +226,7 @@ class PathSolver:
         return PathSolver.find_shortest_path(self.maze, self.pos, self.goal)
 
     @staticmethod
-    def find_shortest_path(maze, start, goal):
+    def find_shortest_path(maze, start, goal, include_tail=False):
         visited = {}
         paths = {}
         queue = []
@@ -232,7 +239,7 @@ class PathSolver:
             if current_pos == goal:
                 return maze.reconstruct_path(current_pos)
 
-            neighbors = maze.get_neighbors(current_pos)
+            neighbors = maze.get_neighbors(current_pos, include_tail)
             for neighbor in neighbors:
                 neighbor.cost = current_pos.cost + \
                     maze.cost(current_pos, neighbor)
@@ -256,7 +263,7 @@ class Maze:
         self.grid = game.map
         self.tail = me.tail[1:]
 
-    def get_neighbors(self, pos):
+    def get_neighbors(self, pos, include_tail=False):
         result = []
         moves = [(1, 0), (-1, 0), (0, 1), (0, -1)]
         current_pos = pos.coordinates
@@ -265,8 +272,11 @@ class Maze:
                 current_pos.x + move[0], current_pos.y + move[1])
             if new_pos.x >= 0 and new_pos.x < len(self.grid[0]):
                 if new_pos.y >= 0 and new_pos.y < len(self.grid):
-                    if self.grid[new_pos.y][new_pos.x] not in ["W", "!"] and Point(new_pos.x, new_pos.y) not in self.tail:
-                        result.append(Maze.Node(new_pos.x, new_pos.y, pos))
+                    if self.grid[new_pos.y][new_pos.x] not in ["W", "!"]:
+                        if include_tail:
+                            result.append(Maze.Node(new_pos.x, new_pos.y, pos))
+                        elif Point(new_pos.x, new_pos.y) not in self.tail:
+                            result.append(Maze.Node(new_pos.x, new_pos.y, pos))
         return result
 
     def cost_estimate(self, pos, target):
