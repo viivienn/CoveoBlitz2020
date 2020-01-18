@@ -21,7 +21,7 @@ class Bot:
 
     def get_closest_tile(self, me: Player, game: Game, target_type: TileType):
         game_map = game.map
-        closest_blitz = (math.inf, None)
+        closest_blitz = (math.inf, None, None)
         for y, row in enumerate(game_map):
             for x, tile in enumerate(row):
                 if target_type == TileType.get_tile_type(tile):
@@ -30,14 +30,13 @@ class Bot:
                     if distance < closest_blitz[0]:
                         path = self.find_path(me, game, Point(x, y))
                         maze = Maze(game, me)
-                        neighbors = maze.get_neighbors(Maze.Node(x, y, None))
-                        if path != None and len(neighbors) >= 2:
-                            closest_blitz = (distance, Point(x, y))
-        return closest_blitz[1]
+                        if path != None:
+                            closest_blitz = (distance, Point(x, y), path)
+        return closest_blitz
 
     def get_closest_safe_tile(self, me: Player, game: Game):
         game_map = game.map
-        closest_safe_tile = (math.inf, None)
+        closest_safe_tile = (math.inf, None, None)
         for y, row in enumerate(game_map):
             for x, tile in enumerate(row):
                 if (game.get_tile_type_at(Point(x, y)) == TileType.CONQUERED and game.get_tile_owner_id(Point(x, y)) == me.id) or Point(x, y) == me.tail[0]:
@@ -46,6 +45,23 @@ class Bot:
                     if distance < closest_safe_tile[0]:
                         closest_safe_tile = (distance, Point(x, y))
         return closest_safe_tile[1]
+
+    def get_closest_attack_tile(self, me: Player, game: Game, players):
+        closest_attack_tile = (math.inf, None, None)
+        for id, player in players.items():
+            tail = player.tail
+            for target in tail:
+                if id == game.player_id or player.killed:
+                    continue
+                if target == player.spawn_position:
+                    continue
+                distance = self.manhattan_distance(me.position, target)
+                if distance < closest_attack_tile[0]:
+                    path = self.find_path(me, game, target)
+                    maze = Maze(game, me)
+                    if path != None:
+                        closest_attack_tile = (distance, target, path)
+        return closest_attack_tile
 
     def find_path(self, me: Player, game: Game, target: Point):
         start = Maze.Node(me.position.x, me.position.y, None)
@@ -105,26 +121,46 @@ class Bot:
         players_by_id: Dict[int,
                             Player] = game_message.generate_players_by_id_dict()
         me: Player = players_by_id[game_message.game.player_id]
-        legal_moves = self.get_legal_moves_for_current_tick(
-            game=game_message.game, players_by_id=players_by_id)
+
+        for player_id, player in players_by_id.items():
+            if player_id == game_message.game.player_id or player.killed:
+                continue
+
+            if me.position.x + 1 == player.position.x and me.position.y == player.position.y and me.direction != Direction.LEFT:
+                return self.goto(me, Direction.RIGHT)
+            elif me.position.x - 1 == player.position.x and me.position.y == player.position.y and me.direction != Direction.RIGHT:
+                return self.goto(me, Direction.LEFT)
+            elif me.position.x == player.position.x and me.position.y + 1 == player.position.y and me.direction != Direction.UP:
+                return self.goto(me, Direction.DOWN)
+            elif me.position.x == player.position.x and me.position.y - 1 == player.position.y and me.direction != Direction.DOWN:
+                return self.goto(me, Direction.UP)
 
         try:
-            closest_blitz = self.get_closest_tile(
-                me, game_message.game, TileType.BLITZIUM)
+            _, _, blitz_path = self.get_closest_tile(me, game_message.game, TileType.BLITZIUM)
+            _, _, attack_path = self.get_closest_attack_tile(me, game_message.game, players_by_id)
 
-            closest_safe_tile = self.get_closest_safe_tile(
-                me, game_message.game)
-            if closest_safe_tile == None:
-                closest_safe_tile = me.tail[0]
+            if attack_path != None and blitz_path == None:
+                target = attack_path
+            elif attack_path == None and blitz_path != None:
+                target = blitz_path
+            elif attack_path == None and blitz_path == None:
+                target = None
+            elif attack_path != None and blitz_path != None:
+                if len(attack_path) > len(blitz_path):
+                    target = blitz_path
+                else:
+                    target = attack_path
 
+            if target != None:
+                action = self.goto(me, target[0])
+                return action
+
+            """
             distance_to_safety = self.manhattan_distance(
                 closest_safe_tile, me.position)
 
             target = closest_safe_tile
-            start = Maze.Node(me.position.x, me.position.y, None)
-            goal = Maze.Node(target.x, target.y, None)
-            maze = Maze(game_message.game, me)
-            path_to_safety = PathSolver.find_shortest_path(maze, start, goal)
+            path_to_safety = self.find_path(me, game_message.game, target)
 
             for player_id, player in players_by_id.items():
                 if player_id == game_message.game.player_id or player.killed:
@@ -223,15 +259,18 @@ class Bot:
                 for id, player in players_by_id.items():
                     if id != game_message.game.player_id:
                         target = player.tail[0]
-                        path = self.find_path(me, game_message.game, target)
-                        if path != None:
-                            action = self.goto(me, path[0])
-                            if action in legal_moves:
-                                return action
-
+                        if target != player.spawn_position:
+                            path = self.find_path(me, game_message.game, target)
+                            if path != None:
+                                action = self.goto(me, path[0])
+                                if action in legal_moves:
+                                    return action
+            """
         except Exception as e:
             traceback.print_exc()
 
+        legal_moves = self.get_legal_moves_for_current_tick(
+            game=game_message.game, players_by_id=players_by_id)
         return random.choice(legal_moves)
 
 
