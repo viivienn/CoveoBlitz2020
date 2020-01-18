@@ -2,38 +2,310 @@ from typing import Dict, List
 from game_message import *
 from bot_message import *
 import random
+import math
+import heapq
+from collections import namedtuple
 
 
 class Bot:
+    STATE_NORMAL = 1
+    STATE_DEFENSE = 2
+    STATE_RUN_TO_SAFETY = 3
+    STATE_RANDOM = 4
 
     def __init__(self):
-        '''
-        This method should be use to initialize some variables you will need throughout the game.
-        '''
+        self.state = Bot.STATE_NORMAL
 
-    def get_next_move(self, game_message: GameMessage) -> Move:
-        '''
-        Here is where the magic happens, for now the moves are random. I bet you can do better ;)
-        '''
-        players_by_id: Dict[int, Player] = game_message.generate_players_by_id_dict()
+    def get_closest_tile(self, me: Player, game: Game, target_type: TileType):
+        game_map = game.map
+        closest_blitz = (math.inf, None)
+        for y, row in enumerate(game_map):
+            for x, tile in enumerate(row):
+                if target_type == TileType.get_tile_type(tile):
+                    distance = self.manhattan_distance(
+                        me.position, Point(x, y))
+                    if distance < closest_blitz[0]:
+                        closest_blitz = (distance, Point(x, y))
+        return closest_blitz[1]
 
-        legal_moves = self.get_legal_moves_for_current_tick(game=game_message.game, players_by_id=players_by_id)
+    def get_closest_safe_tile(self, me: Player, game: Game):
+        game_map = game.map
+        closest_safe_tile = (math.inf, None)
+        for y, row in enumerate(game_map):
+            for x, tile in enumerate(row):
+                if game.get_tile_type_at(Point(x, y)) == TileType.CONQUERED and game.get_tile_owner_id(Point(x, y)) == me.id:
+                    distance = self.manhattan_distance(
+                        me.position, Point(x, y))
+                    if distance < closest_safe_tile[0]:
+                        closest_safe_tile = (distance, Point(x, y))
+        return closest_safe_tile[1]
 
-
-        # You can print out a pretty version of the map but be aware that
-        # printing out long strings can impact your bot performance (30 ms in average).
-        # print(game_message.game.pretty_map)
-
-        return random.choice(legal_moves)
+    def manhattan_distance(self, a: Point, b: Point):
+        return abs(a.x-b.x) + abs(a.y-b.y)
 
     def get_legal_moves_for_current_tick(self, game: Game, players_by_id: Dict[int, Player]) -> List[Move]:
-        '''
-        You should define here what moves are legal for your current position and direction
-        so that your bot does not send a lethal move.
-
-        Your bot moves are relative to its direction, if you are in the DOWN direction.
-        A TURN_RIGHT move will make your bot move left in the map visualization (replay or logs)
-        '''
         me: Player = players_by_id[game.player_id]
 
         return [move for move in Move]
+
+    def goto(self, me: Player, direction: Direction) -> Move:
+        if direction == Direction.UP:
+            if me.direction == Direction.UP:
+                return Move.FORWARD
+            elif me.direction == Direction.RIGHT:
+                return Move.TURN_LEFT
+            elif me.direction == Direction.LEFT:
+                return Move.TURN_RIGHT
+            else:
+                raise Exception("backtrack!!")
+        elif direction == Direction.DOWN:
+            if me.direction == Direction.DOWN:
+                return Move.FORWARD
+            elif me.direction == Direction.LEFT:
+                return Move.TURN_LEFT
+            elif me.direction == Direction.RIGHT:
+                return Move.TURN_RIGHT
+            else:
+                raise Exception("backtrack!!")
+        elif direction == Direction.LEFT:
+            if me.direction == Direction.LEFT:
+                return Move.FORWARD
+            elif me.direction == Direction.UP:
+                return Move.TURN_LEFT
+            elif me.direction == Direction.DOWN:
+                return Move.TURN_RIGHT
+            else:
+                raise Exception("backtrack!!")
+        elif direction == Direction.RIGHT:
+            if me.direction == Direction.RIGHT:
+                return Move.FORWARD
+            elif me.direction == Direction.UP:
+                return Move.TURN_RIGHT
+            elif me.direction == Direction.DOWN:
+                return Move.TURN_LEFT
+            else:
+                raise Exception("backtrack!!")
+        else:
+            raise Exception("uh oh")
+
+    def get_next_move(self, game_message: GameMessage) -> Move:
+        players_by_id: Dict[int,
+                            Player] = game_message.generate_players_by_id_dict()
+        me: Player = players_by_id[game_message.game.player_id]
+        legal_moves = self.get_legal_moves_for_current_tick(
+            game=game_message.game, players_by_id=players_by_id)
+
+        try:
+            closest_blitz = self.get_closest_tile(
+                me, game_message.game, TileType.BLITZIUM)
+
+            closest_safe_tile = self.get_closest_safe_tile(
+                me, game_message.game)
+            if closest_safe_tile == None:
+                closest_safe_tile = me.tail[0]
+            distance_to_safety = self.manhattan_distance(
+                closest_safe_tile, me.position)
+
+            print(closest_safe_tile, distance_to_safety)
+
+            for player_id, player in players_by_id.items():
+                if player_id == game_message.game.player_id or player.killed:
+                    continue
+
+                if me.position.x + 1 == player.position.x and me.position.y == player.position.y and me.direction != Direction.LEFT:
+                    return self.goto(me, Direction.RIGHT)
+                elif me.position.x - 1 == player.position.x and me.position.y == player.position.y and me.direction != Direction.RIGHT:
+                    return self.goto(me, Direction.LEFT)
+                elif me.position.x == player.position.x and me.position.y + 1 == player.position.y and me.direction != Direction.UP:
+                    return self.goto(me, Direction.DOWN)
+                elif me.position.x == player.position.x and me.position.y - 1 == player.position.y and me.direction != Direction.DOWN:
+                    return self.goto(me, Direction.UP)
+
+                for point in player.tail:
+                    if me.position.x + 1 == point.x and me.position.y == point.y and me.direction != Direction.LEFT:
+                        return self.goto(me, Direction.RIGHT)
+                    elif me.position.x - 1 == point.x and me.position.y == point.y and me.direction != Direction.RIGHT:
+                        return self.goto(me, Direction.LEFT)
+                    elif me.position.x == point.x and me.position.y + 1 == point.y and me.direction != Direction.UP:
+                        return self.goto(me, Direction.DOWN)
+                    elif me.position.x == point.x and me.position.y - 1 == point.y and me.direction != Direction.DOWN:
+                        return self.goto(me, Direction.UP)
+
+            if self.state != Bot.STATE_RUN_TO_SAFETY:
+                tail = me.tail[1:]
+                tail.append(me.position)
+
+                for player_id, player in players_by_id.items():
+                    if player_id == game_message.game.player_id or player.killed:
+                        continue
+
+                    for point in tail:
+
+                        if self.manhattan_distance(player.position, point) - 1 < distance_to_safety:
+                            self.state = Bot.STATE_RUN_TO_SAFETY
+                            break
+
+                    if self.state == Bot.STATE_RUN_TO_SAFETY:
+                        break
+
+            if self.state == Bot.STATE_NORMAL:
+                if closest_blitz == None:
+                    self.state = Bot.STATE_DEFENSE
+                    return self.get_next_move(game_message)
+
+                if closest_blitz != None:
+                    start = Maze.Node(me.position.x, me.position.y, None)
+                    goal = Maze.Node(closest_blitz.x, closest_blitz.y, None)
+                    maze = Maze(game_message.game, me)
+                    path = PathSolver.find_shortest_path(maze, start, goal)
+
+                    if path != None:
+                        action = self.goto(me, path[0])
+                        if action in legal_moves:
+                            return action
+
+            elif self.state == Bot.STATE_DEFENSE:
+                if len(me.tail) == 1:
+                    if closest_blitz != None:
+                        self.state = Bot.STATE_NORMAL
+                    else:
+                        self.state = Bot.STATE_RANDOM
+                    return self.get_next_move(game_message)
+
+                target = me.tail[0]
+                start = Maze.Node(me.position.x, me.position.y, None)
+                goal = Maze.Node(target.x, target.y, None)
+                maze = Maze(game_message.game, me)
+                path = PathSolver.find_shortest_path(maze, start, goal)
+
+                if path != None:
+                    action = self.goto(me, path[0])
+                    if action in legal_moves:
+                        return action
+
+            elif self.state == Bot.STATE_RUN_TO_SAFETY:
+                if len(me.tail) == 1:
+                    if closest_blitz != None:
+                        self.state = Bot.STATE_NORMAL
+                    else:
+                        self.state = Bot.STATE_RANDOM
+                    return self.get_next_move(game_message)
+
+                target = closest_safe_tile
+                start = Maze.Node(me.position.x, me.position.y, None)
+                goal = Maze.Node(target.x, target.y, None)
+                maze = Maze(game_message.game, me)
+                path = PathSolver.find_shortest_path(maze, start, goal)
+
+                if path != None:
+                    action = self.goto(me, path[0])
+                    if action in legal_moves:
+                        return action
+
+        except Exception as e:
+            print(str(e))
+
+        return random.choice(legal_moves)
+
+
+class PathSolver:
+
+    def __init__(self, maze, start, goal):
+        self.maze = maze
+        self.pos = start
+        self.goal = goal
+
+    def solve(self):
+        return PathSolver.find_shortest_path(self.maze, self.pos, self.goal)
+
+    @staticmethod
+    def find_shortest_path(maze, start, goal):
+        visited = {}
+        paths = {}
+        queue = []
+        heapq.heappush(queue, start)
+        visited[start.id] = start.cost
+
+        while len(queue) > 0:
+            current_pos = heapq.heappop(queue)
+
+            if current_pos == goal:
+                return maze.reconstruct_path(current_pos)
+
+            neighbors = maze.get_neighbors(current_pos)
+            for neighbor in neighbors:
+                neighbor.cost = current_pos.cost + \
+                    maze.cost(current_pos, neighbor)
+                neighbor.estimate = neighbor.cost + \
+                    maze.cost_estimate(neighbor, goal)
+                if neighbor.id not in visited or visited[neighbor.id] > neighbor.cost:
+                    paths[neighbor.id] = current_pos
+                    heapq.heappush(queue, neighbor)
+                    visited[neighbor.id] = neighbor.cost
+        return None
+
+    @staticmethod
+    def find_all_paths(maze, start, goal):
+        pass
+
+
+class Maze:
+    Point = namedtuple('Point', ['x', 'y'])
+
+    def __init__(self, game, me: Player):
+        self.grid = game.map
+        self.tail = me.tail[1:]
+
+    def get_neighbors(self, pos):
+        result = []
+        moves = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        current_pos = pos.coordinates
+        for move in moves:
+            new_pos = Maze.Point(
+                current_pos.x + move[0], current_pos.y + move[1])
+            if new_pos.x >= 0 and new_pos.x < len(self.grid[0]):
+                if new_pos.y >= 0 and new_pos.y < len(self.grid):
+                    if self.grid[new_pos.y][new_pos.x] not in ["W", "!"] and Point(new_pos.x, new_pos.y) not in self.tail:
+                        result.append(Maze.Node(new_pos.x, new_pos.y, pos))
+        return result
+
+    def cost_estimate(self, pos, target):
+        return 0
+
+    def cost(self, pos, neighbor):
+        return 1
+
+    def reconstruct_path(self, node):
+        path = []
+        parent = node.parent
+        while parent != None:
+            diff = (node.coordinates.x-parent.coordinates.x,
+                    node.coordinates.y-parent.coordinates.y)
+            if diff == (0, 1):
+                path.append(Direction.DOWN)
+            if diff == (0, -1):
+                path.append(Direction.UP)
+            if diff == (1, 0):
+                path.append(Direction.RIGHT)
+            if diff == (-1, 0):
+                path.append(Direction.LEFT)
+            node = parent
+            parent = parent.parent
+        return path[::-1]
+
+    class Node:
+        def __init__(self, x, y, parent):
+            self.id = str(x) + "," + str(y)
+            self.coordinates = Maze.Point(x, y)
+            self.parent = parent
+            self.cost = 0
+            self.estimate = 0
+
+        def __lt__(self, b):
+            return self.estimate < b.estimate
+
+        def __gt__(self, b):
+            return self.estimate > b.estimate
+
+        def __eq__(self, b):
+            return type(b) == type(self) and self.coordinates.x == b.coordinates.x and self.coordinates.y == b.coordinates.y
