@@ -6,6 +6,8 @@ import math
 import heapq
 from collections import namedtuple
 
+import traceback
+
 
 class Bot:
 
@@ -26,9 +28,9 @@ class Bot:
                     distance = self.manhattan_distance(
                         me.position, Point(x, y))
                     if distance < closest_blitz[0]:
-                        path = self.find_path(me, game, Point(x,y))
+                        path = self.find_path(me, game, Point(x, y))
                         maze = Maze(game, me)
-                        neighbors = maze.get_neighbors(Maze.Node(x,y,None))
+                        neighbors = maze.get_neighbors(Maze.Node(x, y, None))
                         if path != None and len(neighbors) >= 2:
                             closest_blitz = (distance, Point(x, y))
         return closest_blitz[1]
@@ -38,7 +40,7 @@ class Bot:
         closest_safe_tile = (math.inf, None)
         for y, row in enumerate(game_map):
             for x, tile in enumerate(row):
-                if (game.get_tile_type_at(Point(x, y)) == TileType.CONQUERED and game.get_tile_owner_id(Point(x, y)) == me.id) or Point(x,y) == me.tail[0]:
+                if (game.get_tile_type_at(Point(x, y)) == TileType.CONQUERED and game.get_tile_owner_id(Point(x, y)) == me.id) or Point(x, y) == me.tail[0]:
                     distance = self.manhattan_distance(
                         me.position, Point(x, y))
                     if distance < closest_safe_tile[0]:
@@ -147,7 +149,7 @@ class Bot:
                     elif me.position.x == point.x and me.position.y - 1 == point.y and me.direction != Direction.DOWN:
                         return self.goto(me, Direction.UP)
 
-            if self.state == Bot.STATE_BLITZ and path_to_safety != None:
+            if self.state == Bot.STATE_BLITZ and path_to_safety != None and len(me.tail) > 6:
                 tail = me.tail[1:]
                 tail.append(me.position)
 
@@ -155,20 +157,25 @@ class Bot:
                     if player_id == game_message.game.player_id or player.killed:
                         continue
 
+                    smallest_manhattan = None
                     for point in tail:
-                        if self.manhattan_distance(player.position, point) - 4 < distance_to_safety:
-                            start = Maze.Node(
-                                player.position.x, player.position.y, None)
-                            goal = Maze.Node(point.x, point.y, None)
-                            maze = Maze(game_message.game, me)
-                            path_to_death = PathSolver.find_shortest_path(
-                                maze, start, goal, include_tail=True)
-                            if len(path_to_safety) > len(path_to_death) or len(path_to_death) < 4:
-                                self.state = Bot.STATE_RUN_TO_SAFETY
-                                break
+                        manh = self.manhattan_distance(player.position, point)
+                        if manh - 4 < distance_to_safety:
+                            if smallest_manhattan == None or manh < smallest_manhattan[2]:
+                                smallest_manhattan = (
+                                    player.position, point, manh)
 
-                    if self.state == Bot.STATE_RUN_TO_SAFETY:
-                        break
+                    if smallest_manhattan != None:
+                        start = Maze.Node(
+                            player.position.x, player.position.y, None)
+                        goal = Maze.Node(point.x, point.y, None)
+                        maze = Maze(game_message.game, me)
+                        path_to_death = PathSolver.find_shortest_path(
+                            maze, start, goal, include_tail=True)
+
+                        if len(path_to_safety) > len(path_to_death) or len(path_to_death) < 4:
+                            self.state = Bot.STATE_RUN_TO_SAFETY
+                            break
 
             if self.state == Bot.STATE_BLITZ:
                 if closest_blitz == None:
@@ -223,7 +230,7 @@ class Bot:
                                 return action
 
         except Exception as e:
-            print(e)
+            traceback.print_exc()
 
         return random.choice(legal_moves)
 
